@@ -66,6 +66,8 @@ const pageHTML = `<!doctype html>
   .bar { height:6px; border-radius:3px; background:var(--line); overflow:hidden; margin-top:5px; }
   .bar > i { display:block; height:100%; background:var(--accent); width:0; }
   .foot { color:var(--dim); font-size:12.5px; margin:28px 0 10px; }
+  a.edit { float:right; color:var(--accent); font-size:13.5px; text-decoration:none; }
+  a.edit:hover { text-decoration:underline; }
   @media (max-width:560px) {
     .wrap { padding:12px 16px; }
     .tag { flex-basis:100%; }
@@ -124,6 +126,7 @@ const pageHTML = `<!doctype html>
   {{range .S.Resources}}
   <div class="panel">
     <strong>{{.Type}}</strong> <span class="mono">{{.Name}}</span>
+    <a class="edit" href="/edit?k={{$.Token}}&amp;type={{.Type}}&amp;name={{.Name}}">edit</a>
     <table>
       {{$p := .Pairs}}
       {{range .Order}}<tr><td class="k">{{.}}</td><td class="mono">{{index $p .}}</td></tr>{{end}}

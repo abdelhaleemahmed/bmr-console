@@ -33,9 +33,11 @@ import (
 	"html/template"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -378,6 +380,7 @@ type server struct {
 	token string
 	samp  *sampler
 	tmpl  *template.Template
+	etmpl *template.Template
 }
 
 func (s *server) authed(r *http.Request) bool {
@@ -447,6 +450,90 @@ func (s *server) handleDirector(w http.ResponseWriter, r *http.Request) {
 // "start /b cmd /c ..." was no better in a PE -- both left an empty file
 // and no running server. A program whose output has to be kept should
 // keep it itself.
+
+// handleEdit renders the generated form for one resource. Reading is open, in
+// keeping with the rest of the page; the token is only checked on the write.
+func (s *server) handleEdit(w http.ResponseWriter, r *http.Request) {
+	typ, name := r.FormValue("type"), r.FormValue("name")
+	p, err := buildEditPage(s.env, typ, name, s.token)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	p.Err = r.FormValue("err")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.etmpl.Execute(w, p); err != nil {
+		fmt.Fprintln(os.Stderr, "template:", err)
+	}
+}
+
+// handleResource writes whatever the generated form sent back. It does not
+// know the directive names either: every field called v-<Directive> is one,
+// which is what keeps a new directive from needing new code here.
+func (s *server) handleResource(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !s.authed(r) {
+		http.Error(w, "the key printed on the console is required to change "+
+			"anything; reading is open", http.StatusForbidden)
+		return
+	}
+	typ, name := r.FormValue("type"), r.FormValue("name")
+	res, err := findResource(s.env, typ, name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Keep the file's own order for directives it already had, then append
+	// anything newly filled in. A diff of the file after an edit should show
+	// the change and not a reshuffle.
+	keys := map[string]string{}
+	var order []string
+	add := func(k, v string) {
+		if _, seen := keys[k]; !seen {
+			order = append(order, k)
+		}
+		keys[k] = v
+	}
+	for _, k := range res.Order {
+		if v, ok := r.Form["v-"+k]; ok {
+			add(k, strings.TrimSpace(v[0]))
+		} else {
+			add(k, res.Keys[k])
+		}
+	}
+	var extra []string
+	for field := range r.Form {
+		if !strings.HasPrefix(field, "v-") {
+			continue
+		}
+		k := strings.TrimPrefix(field, "v-")
+		if _, seen := keys[k]; seen {
+			continue
+		}
+		if strings.TrimSpace(r.Form.Get(field)) != "" {
+			extra = append(extra, k)
+		}
+	}
+	sort.Strings(extra)
+	for _, k := range extra {
+		add(k, strings.TrimSpace(r.Form.Get("v-"+k)))
+	}
+
+	if err := saveResource(s.env, res, order, keys); err != nil {
+		u := url.Values{"k": {s.token}, "type": {typ}, "name": {name}, "err": {err.Error()}}
+		http.Redirect(w, r, "/edit?"+u.Encode(), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/?k="+s.token, http.StatusSeeOther)
+}
+
 func serveMain(e Env, addr, bannerPath string) error {
 	raw := make([]byte, 8)
 	if _, err := rand.Read(raw); err != nil {
@@ -458,11 +545,17 @@ func serveMain(e Env, addr, bannerPath string) error {
 	if err != nil {
 		return err
 	}
+	s.etmpl, err = template.New("edit").Parse(editHTML)
+	if err != nil {
+		return err
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/api/state", s.handleState)
 	mux.HandleFunc("/director", s.handleDirector)
+	mux.HandleFunc("/edit", s.handleEdit)
+	mux.HandleFunc("/resource", s.handleResource)
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
