@@ -437,7 +437,17 @@ func (s *server) handleDirector(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/?k="+s.token, http.StatusSeeOther)
 }
 
-func serveMain(e Env, addr string) error {
+// serveMain starts the server. bannerPath, when set, gets a copy of the
+// startup banner -- which is the only place the key appears.
+//
+// WHY THE PROGRAM WRITES THAT FILE AND NOT THE SHELL. The obvious way is
+// a redirect in the boot script. On Windows that does not do what it
+// reads like: "start /b prog > file" binds the redirect to START, which
+// prints nothing, and the child keeps the console. Wrapping it as
+// "start /b cmd /c ..." was no better in a PE -- both left an empty file
+// and no running server. A program whose output has to be kept should
+// keep it itself.
+func serveMain(e Env, addr, bannerPath string) error {
 	raw := make([]byte, 8)
 	if _, err := rand.Read(raw); err != nil {
 		return err
@@ -458,17 +468,24 @@ func serveMain(e Env, addr string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(bar("BMR CONSOLE, IN A BROWSER"))
+	var b strings.Builder
+	b.WriteString(bar("BMR CONSOLE, IN A BROWSER") + "\n")
 	for _, ip := range serveURLs(ln.Addr().(*net.TCPAddr)) {
-		fmt.Printf("  http://%s/?k=%s\n", ip, s.token)
+		fmt.Fprintf(&b, "  http://%s/?k=%s\n", ip, s.token)
 	}
-	fmt.Println()
-	fmt.Println("  Reading is open to anyone who can reach this address.")
-	fmt.Println("  Changing the configuration needs the key in those URLs, which")
-	fmt.Println("  is new every time this starts. There is no other authentication:")
-	fmt.Println("  serve this on a recovery network, not on one you share.")
-	fmt.Println()
-	fmt.Println("  Ctrl-C to stop.")
+	b.WriteString("\n  Reading is open to anyone who can reach this address.\n")
+	b.WriteString("  Changing the configuration needs the key in those URLs, which\n")
+	b.WriteString("  is new every time this starts. There is no other authentication:\n")
+	b.WriteString("  serve this on a recovery network, not on one you share.\n")
+	fmt.Print(b.String())
+	if bannerPath != "" {
+		if err := os.WriteFile(bannerPath, []byte(b.String()), 0o600); err != nil {
+			fmt.Fprintf(os.Stderr, "could not write %s: %v\n", bannerPath, err)
+		} else {
+			fmt.Printf("\n  this text is also in %s\n", bannerPath)
+		}
+	}
+	fmt.Println("\n  Ctrl-C to stop.")
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	return srv.Serve(ln)
 }

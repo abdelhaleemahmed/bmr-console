@@ -51,6 +51,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -376,35 +377,55 @@ func listening(port int) check {
 // reachable answers the other half of the question: the director has to reach
 // THIS machine, and a daemon bound to the loopback only is a daemon no
 // director can use. Every address this host has, and the port on each.
+// reachable dials the daemon port on every address this machine has,
+// because that is what the director will do and it fails the same way.
+//
+// CONCURRENTLY, AND THAT IS NOT A MICRO-OPTIMISATION. The first version
+// dialled one address after another with a three-second timeout each. On a
+// developer workstation with thirteen addresses -- host-only networks, NAT
+// adapters, WSL -- one page took 26 seconds to render, and serve mode polls
+// every three. Slow enough to look broken is broken.
 func reachable(port int) []check {
-	var out []check
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		return []check{{"addresses", false, err.Error()}}
 	}
+
+	var ips []string
 	apipa := 0
 	for _, a := range addrs {
 		ipnet, ok := a.(*net.IPNet)
 		if !ok || ipnet.IP.IsLoopback() || ipnet.IP.To4() == nil {
 			continue
 		}
-		// 169.254.x.x is not an address anything can route to. Windows hands
-		// one out when a static assignment is rejected -- a duplicate, most
-		// often -- and leaves the interface looking configured, so it is
-		// worth naming rather than listing among the failures.
+		// 169.254.x.x is not an address anything can route to. Windows
+		// hands one out when a static assignment is rejected -- a duplicate,
+		// most often -- and leaves the interface looking configured, so it
+		// is worth naming rather than listing among the failures.
 		if ipnet.IP.IsLinkLocalUnicast() {
 			apipa++
 			continue
 		}
-		ip := ipnet.IP.String()
-		c, err := net.DialTimeout("tcp", net.JoinHostPort(ip, strconv.Itoa(port)), 3*time.Second)
-		if err != nil {
-			out = append(out, check{"on " + ip, false, "not accepting connections"})
-			continue
-		}
-		c.Close()
-		out = append(out, check{"on " + ip, true, "a director can reach this"})
+		ips = append(ips, ipnet.IP.String())
 	}
+
+	out := make([]check, len(ips))
+	var wg sync.WaitGroup
+	for i, ip := range ips {
+		wg.Add(1)
+		go func(i int, ip string) {
+			defer wg.Done()
+			c, err := net.DialTimeout("tcp", net.JoinHostPort(ip, strconv.Itoa(port)), 3*time.Second)
+			if err != nil {
+				out[i] = check{"on " + ip, false, "not accepting connections"}
+				return
+			}
+			c.Close()
+			out[i] = check{"on " + ip, true, "a director can reach this"}
+		}(i, ip)
+	}
+	wg.Wait()
+
 	if apipa > 0 {
 		out = append(out, check{"link-local only", false, fmt.Sprintf(
 			"%d address(es) are 169.254.x.x: the static address was refused, or DHCP "+
@@ -641,13 +662,26 @@ func main() {
 		// recovery wants -- the browser is usually on another machine -- and
 		// an explicit 127.0.0.1:8080 is there for when it is not.
 		addr := ":8080"
-		if len(os.Args) > 2 {
-			addr = os.Args[2]
-			if !strings.Contains(addr, ":") {
-				addr = ":" + addr
+		banner := ""
+		rest := os.Args[2:]
+		for i := 0; i < len(rest); i++ {
+			switch rest[i] {
+			case "-banner", "--banner":
+				// Where to keep a copy of the startup banner, which is
+				// the only place the key appears. A boot script cannot
+				// capture it with a redirect -- see serveMain.
+				if i+1 < len(rest) {
+					i++
+					banner = rest[i]
+				}
+			default:
+				addr = rest[i]
+				if !strings.Contains(addr, ":") {
+					addr = ":" + addr
+				}
 			}
 		}
-		if err := serveMain(e, addr); err != nil {
+		if err := serveMain(e, addr, banner); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
@@ -656,7 +690,7 @@ func main() {
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", cmd)
 		fmt.Fprintln(os.Stderr, "  bmr-console [env|config|status|jobs|check|version]")
-		fmt.Fprintln(os.Stderr, "  bmr-console serve [addr]   (default :8080)")
+		fmt.Fprintln(os.Stderr, "  bmr-console serve [addr] [-banner <file>]   (default :8080)")
 		os.Exit(2)
 	}
 }
