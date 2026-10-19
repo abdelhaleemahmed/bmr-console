@@ -55,7 +55,9 @@ import (
 )
 
 // version is overwritten at build time by build.sh:
-//   -ldflags "-X main.version=1.1.0"
+//
+//	-ldflags "-X main.version=1.1.0"
+//
 // It is a var rather than a const so the linker can reach it, and it is
 // what `bmr-console version` prints -- a binary that cannot say which
 // release it came from is a binary nobody can report a bug against.

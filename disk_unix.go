@@ -14,12 +14,15 @@ import (
 	"syscall"
 )
 
-func freeSpace(path string) (uint64, error) {
+// spaceOf returns free and total bytes. Total is what lets the caller drop a
+// filesystem that has no size at all -- a kernel bookkeeping mount rather than
+// somewhere a restore could land.
+func spaceOf(path string) (free, total uint64, err error) {
 	var st syscall.Statfs_t
 	if err := syscall.Statfs(path, &st); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	return uint64(st.Bavail) * uint64(st.Bsize), nil
+	return uint64(st.Bavail) * uint64(st.Bsize), uint64(st.Blocks) * uint64(st.Bsize), nil
 }
 
 // volumes reads the mount table rather than guessing. Pseudo-filesystems are
@@ -32,6 +35,7 @@ func volumes() []string {
 		"debugfs": true, "tracefs": true, "configfs": true, "fusectl": true,
 		"bpf": true, "mqueue": true, "hugetlbfs": true, "autofs": true,
 		"binfmt_misc": true, "efivarfs": true, "squashfs": true, "overlay": true,
+		"selinuxfs": true, "ramfs": true, "nsfs": true, "rpc_pipefs": true,
 	}
 	f, err := os.Open("/proc/mounts")
 	if err != nil {
@@ -48,6 +52,13 @@ func volumes() []string {
 			continue
 		}
 		mp := parts[1]
+		// systemd gives each service its own credential mount under
+		// /run/credentials. There can be dozens, they are all zero bytes, and
+		// on the one screen somebody reads during a restore they would bury
+		// the mount point that matters.
+		if strings.HasPrefix(mp, "/run/credentials/") || strings.HasPrefix(mp, "/sys/") {
+			continue
+		}
 		if seen[mp] {
 			continue
 		}

@@ -19,20 +19,24 @@ var (
 	procGetDriveType = kernel32.NewProc("GetDriveTypeW")
 )
 
-func freeSpace(path string) (uint64, error) {
-	p, err := syscall.UTF16PtrFromString(path)
-	if err != nil {
-		return 0, err
+// spaceOf returns free and total bytes. A drive letter that exists but has no
+// media -- an empty optical drive, most often -- answers zero for both, and
+// the caller drops it rather than showing "0 B free" next to the disk the
+// restore is landing on.
+func spaceOf(path string) (free, total uint64, err error) {
+	p, e := syscall.UTF16PtrFromString(path)
+	if e != nil {
+		return 0, 0, e
 	}
-	var freeToCaller, total, free uint64
-	r, _, e := procGetDiskFree.Call(uintptr(unsafe.Pointer(p)),
+	var freeToCaller, tot, f uint64
+	r, _, callErr := procGetDiskFree.Call(uintptr(unsafe.Pointer(p)),
 		uintptr(unsafe.Pointer(&freeToCaller)),
-		uintptr(unsafe.Pointer(&total)),
-		uintptr(unsafe.Pointer(&free)))
+		uintptr(unsafe.Pointer(&tot)),
+		uintptr(unsafe.Pointer(&f)))
 	if r == 0 {
-		return 0, e
+		return 0, 0, callErr
 	}
-	return freeToCaller, nil
+	return freeToCaller, tot, nil
 }
 
 // volumes lists the fixed drives. A restore lands on one of them, and the

@@ -265,8 +265,8 @@ func buildState(e Env, s *sampler) uiState {
 	st.Peers, st.PeersNote = connectedPeers(st.Port)
 
 	for _, v := range volumes() {
-		free, err := freeSpace(v)
-		if err != nil {
+		free, total, err := spaceOf(v)
+		if err != nil || total == 0 {
 			continue
 		}
 		rate := s.observe(v, free)
