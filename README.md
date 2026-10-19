@@ -42,6 +42,7 @@ want from a script or over ssh:
 | `bmr-console config` | what this client believes it is: name, port, working directory, and every director allowed to connect |
 | `bmr-console status` | whether a director can use this machine. Exits non-zero when it cannot |
 | `bmr-console jobs` | what the director has for this client. Needs a `bconsole`, which a recovery client does not normally have |
+| `bmr-console serve [addr]` | the same answers in a browser, plus a form that edits a director safely and a page that polls. See below |
 | `bmr-console check` | all of the above, ending in one line, with an exit status that says the same thing so it can gate a script |
 
 ---
@@ -79,6 +80,66 @@ framebuffer console with no X server -- so a graphical build would fail to
 start on exactly the machines this is for. A numbered menu on stdin/stdout
 works on both, over a serial console, and over ssh, which is how a recovery
 is usually driven anyway.
+
+---
+
+## A browser, when a terminal is the wrong shape
+
+```sh
+bmr-console serve            # :8080 on every interface
+bmr-console serve 127.0.0.1:9000
+```
+
+It prints the URLs it will actually answer on -- *listening on :8080* is not
+something you can type into a browser on another machine -- each carrying a
+key that is new every time it starts.
+
+Three things the text interface cannot do well:
+
+**Edit a director without an editor.** A form writes the resource, then asks
+the daemon to read it back with `-t`. If the daemon refuses, the file goes
+back exactly as it was and the daemon's own complaint is shown. You cannot
+leave this program with a configuration the daemon will not load. An empty
+password is rejected before it is written, with the reason: the director
+reports an authentication error, which reads like a wrong password rather
+than a missing one.
+
+**Watch something change.** The page polls, so a check that goes from
+failing to passing does so while you are looking at it.
+
+**Say what a failure means.** Each failing check carries a sentence about
+what the *other* end will report, because that is the message people see
+first. A link-local address is not described as "169.254.x.x" but as a
+network that looks configured with a client nothing can reach.
+
+### What it can and cannot see of a restore
+
+A file daemon reports progress to its director, not to the machine it runs
+on, so there is no local counter to read and this does not invent a
+percentage. What is locally true, and shown:
+
+- whether the daemon is listening, and on which addresses
+- who is connected to its port right now -- read from `netstat` or `ss`, and
+  **said to be unavailable** rather than shown as an empty list when neither
+  tool is present
+- whether the target filesystem is filling, sampled as a rate. On Linux the
+  ReaR mount point `/mnt/local` is listed first; on Windows the PE's own RAM
+  disk is included deliberately, because it is where a mistargeted restore
+  ends up
+
+### Security, stated plainly
+
+Reading is open to anyone who can reach the port. Changing the configuration
+needs the key printed on the console. There is no user, no password and no
+TLS: this is for a recovery network, not a shared one. Bind it to
+`127.0.0.1` and use an ssh tunnel if that is not the network you have.
+
+The page carries its own CSS and JavaScript inline. Nothing is fetched from
+a CDN, because a recovery network has no internet and a page that renders as
+unstyled text is a page that failed at the only moment it was needed.
+
+Serve mode costs size: `net/http` and `html/template` take the binary from
+about 2.8 MB to about 8.5 MB. Still one static file with no runtime.
 
 ---
 

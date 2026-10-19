@@ -8,14 +8,22 @@
 # that libc is not present.
 set -eu
 cd "$(dirname "$0")"
+
+# The version the binary will report. Pass it in, or let git name the
+# nearest tag; "dev" when this is not a checkout at all.
+VERSION=${1:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}
+VERSION=${VERSION#v}
 unset GOROOT 2>/dev/null || true          # see the toolchain note in the book
 mkdir -p dist
+
+printf 'version %s
+' "$VERSION"
 
 for target in windows/amd64 linux/amd64; do
     os=${target%/*}; arch=${target#*/}
     out="dist/bmr-console-$os-$arch"
     [ "$os" = windows ] && out="$out.exe"
-    CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w" -o "$out" .
+    CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "$out" .
     printf '%-40s %10d bytes\n' "$out" "$(wc -c < "$out")"
 done
 

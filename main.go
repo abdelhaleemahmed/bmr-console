@@ -54,7 +54,12 @@ import (
 	"time"
 )
 
-const version = "0.1"
+// version is overwritten at build time by build.sh:
+//   -ldflags "-X main.version=1.1.0"
+// It is a var rather than a const so the linker can reach it, and it is
+// what `bmr-console version` prints -- a binary that cannot say which
+// release it came from is a binary nobody can report a bug against.
+var version = "dev"
 
 // ---------------------------------------------------------------------------
 // Where things are
@@ -629,11 +634,27 @@ func main() {
 		if !runAll(e) {
 			os.Exit(1)
 		}
+	case "serve", "--serve":
+		// The address is optional. :8080 on every interface is what a
+		// recovery wants -- the browser is usually on another machine -- and
+		// an explicit 127.0.0.1:8080 is there for when it is not.
+		addr := ":8080"
+		if len(os.Args) > 2 {
+			addr = os.Args[2]
+			if !strings.Contains(addr, ":") {
+				addr = ":" + addr
+			}
+		}
+		if err := serveMain(e, addr); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
 	case "-v", "--version", "version":
 		fmt.Printf("bmr-console %s (%s/%s, go %s)\n", version, runtime.GOOS, runtime.GOARCH, runtime.Version())
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", cmd)
 		fmt.Fprintln(os.Stderr, "  bmr-console [env|config|status|jobs|check|version]")
+		fmt.Fprintln(os.Stderr, "  bmr-console serve [addr]   (default :8080)")
 		os.Exit(2)
 	}
 }
